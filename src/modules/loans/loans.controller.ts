@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, 
 import { LoansService } from './loans.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { UpdateLoanDto } from './dto/update-loan.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('loans')
@@ -15,23 +16,30 @@ export class LoansController {
   }
 
   @Get()
-  findAll(@Request() req) {
-    // Admin can see all loans, users can only see their own
+  findAll(@Query() paginationDto: PaginationDto, @Request() req) {
     if (req.user.role === 'admin') {
-      return this.loansService.findAll();
+      return this.loansService.findAll(paginationDto, req.user.role);
     }
-    return this.loansService.findByUser(req.user.id);
+    return this.loansService.findByUser(req.user.id, paginationDto, req.user.role);
+  }
+
+  @Get('statistics')
+  getStatistics(@Request() req) {
+    if (req.user.role !== 'admin') {
+      throw new ForbiddenException('Only admin can view statistics');
+    }
+    return this.loansService.getStatistics();
   }
 
   @Get('my-loans')
-  findMyLoans(@Request() req) {
-    return this.loansService.findByUser(req.user.id);
+  findMyLoans(@Query() paginationDto: PaginationDto, @Request() req) {
+    return this.loansService.findByUser(req.user.id, paginationDto, req.user.role);
   }
 
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req) {
     const userId = req.user.role === 'admin' ? undefined : req.user.id;
-    return this.loansService.findOne(id, userId);
+    return this.loansService.findOne(id, userId, req.user.role);
   }
 
   @Patch(':id')
@@ -42,7 +50,6 @@ export class LoansController {
 
   @Patch(':id/approve')
   approve(@Param('id') id: string, @Request() req) {
-    // Only admin can approve loans
     if (req.user.role !== 'admin') {
       throw new ForbiddenException('Only admin can approve loans');
     }
@@ -51,7 +58,6 @@ export class LoansController {
 
   @Patch(':id/reject')
   reject(@Param('id') id: string, @Request() req) {
-    // Only admin can reject loans
     if (req.user.role !== 'admin') {
       throw new ForbiddenException('Only admin can reject loans');
     }
