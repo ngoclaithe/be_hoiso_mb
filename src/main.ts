@@ -1,9 +1,9 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { LoggerService } from './common/logger/logger.service';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
-
+import { json, raw } from 'express';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
@@ -20,11 +20,22 @@ async function bootstrap() {
     credentials: true, 
   });
 
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true, 
-    forbidNonWhitelisted: true, 
-    transform: true, 
-  }));
+// main.ts
+app.useGlobalPipes(new ValidationPipe({
+  whitelist: true, 
+  forbidNonWhitelisted: true, 
+  transform: true,
+  disableErrorMessages: false,
+  validationError: {
+    target: false,
+    value: false,
+  },
+  exceptionFactory: (errors) => {
+    console.log('=== VALIDATION ERRORS ===');
+    console.log(JSON.stringify(errors, null, 2));
+    return new BadRequestException(errors);
+  }
+}));
 
   const port = process.env.PORT || 5010;
   

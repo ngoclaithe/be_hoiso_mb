@@ -11,21 +11,22 @@ import {
   ParseUUIDPipe,
   ParseIntPipe,
   ParseEnumPipe,
+  Request,
 } from '@nestjs/common';
 import { TransactionService } from './transaction.service';
 import { DepositDto, WithdrawTransactionDto } from './dto/transaction.dto';
 import { TransactionType } from './entities/transaction.entity';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('transactions')
+@UseGuards(JwtAuthGuard)
 export class TransactionController {
   constructor(private readonly transactionService: TransactionService) {}
 
-  @Post('deposit/:userId')
+  @Post('deposit')
   @HttpCode(HttpStatus.CREATED)
-  async deposit(
-    @Param('userId', ParseUUIDPipe) userId: string,
-    @Body() depositDto: DepositDto,
-  ) {
+  async deposit(@Request() req: any, @Body() depositDto: DepositDto) {
+    const userId = req.user.id;
     const transaction = await this.transactionService.deposit(userId, depositDto);
     
     return {
@@ -40,19 +41,16 @@ export class TransactionController {
           balanceBefore: transaction.balanceBefore,
           balanceAfter: transaction.balanceAfter,
           description: transaction.description,
-          referenceId: transaction.referenceId,
           createdAt: transaction.createdAt,
         }
       }
     };
   }
 
-  @Post('withdraw/:userId')
+  @Post('withdraw')
   @HttpCode(HttpStatus.CREATED)
-  async withdraw(
-    @Param('userId', ParseUUIDPipe) userId: string,
-    @Body() withdrawDto: WithdrawTransactionDto,
-  ) {
+  async withdraw(@Request() req: any, @Body() withdrawDto: WithdrawTransactionDto) {
+    const userId = req.user.id;
     const transaction = await this.transactionService.withdraw(userId, withdrawDto);
     
     return {
@@ -67,20 +65,28 @@ export class TransactionController {
           balanceBefore: transaction.balanceBefore,
           balanceAfter: transaction.balanceAfter,
           description: transaction.description,
-          referenceId: transaction.referenceId,
           createdAt: transaction.createdAt,
         }
       }
     };
   }
 
-  @Get('history/:userId')
+  @Get('history')
   async getTransactionHistory(
-    @Param('userId', ParseUUIDPipe) userId: string,
+    @Request() req: any,
     @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 20,
     @Query('offset', new ParseIntPipe({ optional: true })) offset: number = 0,
   ) {
-    const result = await this.transactionService.getTransactionHistory(userId, limit, offset);
+    const userId = req.user.id;
+    const userRole = req.user.role; // Giả sử role được lưu trong JWT payload
+    const isAdmin = userRole === 'admin';
+    
+    const result = await this.transactionService.getTransactionHistory(
+      userId, 
+      limit, 
+      offset, 
+      isAdmin
+    );
     
     return {
       success: true,
@@ -93,8 +99,15 @@ export class TransactionController {
           balanceBefore: transaction.balanceBefore,
           balanceAfter: transaction.balanceAfter,
           description: transaction.description,
-          referenceId: transaction.referenceId,
           createdAt: transaction.createdAt,
+          // Chỉ hiện thông tin wallet cho admin
+          ...(isAdmin && transaction.wallet && {
+            wallet: {
+              id: transaction.wallet.id,
+              userId: transaction.wallet.userId,
+              balance: transaction.wallet.balance,
+            }
+          })
         })),
         pagination: {
           total: result.total,
@@ -106,13 +119,14 @@ export class TransactionController {
     };
   }
 
-  @Get('history/:userId/type/:type')
+  @Get('history/type/:type')
   async getTransactionsByType(
-    @Param('userId', ParseUUIDPipe) userId: string,
+    @Request() req: any,
     @Param('type', new ParseEnumPipe(TransactionType)) type: TransactionType,
     @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 20,
     @Query('offset', new ParseIntPipe({ optional: true })) offset: number = 0,
   ) {
+    const userId = req.user.id;
     const result = await this.transactionService.getTransactionsByType(userId, type, limit, offset);
     
     return {
@@ -126,7 +140,6 @@ export class TransactionController {
           balanceBefore: transaction.balanceBefore,
           balanceAfter: transaction.balanceAfter,
           description: transaction.description,
-          referenceId: transaction.referenceId,
           createdAt: transaction.createdAt,
         })),
         pagination: {
@@ -139,9 +152,107 @@ export class TransactionController {
     };
   }
 
+
+
+  // Admin endpoints - cần thêm AdminGuard
+  @Post('admin/withdraw/:id/approve')
+  @HttpCode(HttpStatus.OK)
+  async approveWithdraw(
+    @Request() req: any,
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    const adminId = req.user?.id; // Có thể dùng để log ai approve
+    const transaction = await this.transactionService.approveWithdraw(id, adminId);
+    
+    return {
+      success: true,
+      message: 'Withdraw request approved successfully',
+      data: {
+        transaction: {
+          id: transaction.id,
+          type: transaction.type,
+          amount: transaction.amount,
+          status: transaction.status,
+          balanceBefore: transaction.balanceBefore,
+          balanceAfter: transaction.balanceAfter,
+          description: transaction.description,
+          createdAt: transaction.createdAt,
+        }
+      }
+    };
+  }
+
+  @Post('admin/withdraw/:id/reject')
+  @HttpCode(HttpStatus.OK)
+  async rejectWithdraw(
+    @Request() req: any,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { reason?: string }
+  ) {
+    const adminId = req.user?.id; // Có thể dùng để log ai reject
+    const transaction = await this.transactionService.rejectWithdraw(id, body.reason, adminId);
+    
+    return {
+      success: true,
+      message: 'Withdraw request rejected successfully',
+      data: {
+        transaction: {
+          id: transaction.id,
+          type: transaction.type,
+          amount: transaction.amount,
+          status: transaction.status,
+          balanceBefore: transaction.balanceBefore,
+          balanceAfter: transaction.balanceAfter,
+          description: transaction.description,
+          createdAt: transaction.createdAt,
+        }
+      }
+    };
+  }
+
+  @Get('admin/pending-withdrawals')
+  async getPendingWithdrawals(
+    @Request() req: any,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 20,
+    @Query('offset', new ParseIntPipe({ optional: true })) offset: number = 0,
+  ) {
+    const result = await this.transactionService.getPendingWithdrawals(limit, offset);
+    
+    return {
+      success: true,
+      data: {
+        transactions: result.transactions.map(transaction => ({
+          id: transaction.id,
+          type: transaction.type,
+          amount: transaction.amount,
+          status: transaction.status,
+          balanceBefore: transaction.balanceBefore,
+          balanceAfter: transaction.balanceAfter,
+          description: transaction.description,
+          createdAt: transaction.createdAt,
+          wallet: {
+            id: transaction.wallet.id,
+            userId: transaction.wallet.userId,
+            balance: transaction.wallet.balance,
+          }
+        })),
+        pagination: {
+          total: result.total,
+          limit: limit,
+          offset: offset,
+          hasMore: offset + limit < result.total,
+        }
+      }
+    };
+  }
+
   @Get(':id')
-  async getTransactionById(@Param('id', ParseUUIDPipe) id: string) {
-    const transaction = await this.transactionService.findById(id);
+  async getTransactionById(
+    @Request() req: any,
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    const userId = req.user.id;
+    const transaction = await this.transactionService.findByIdAndUserId(id, userId);
     
     return {
       success: true,
@@ -154,7 +265,6 @@ export class TransactionController {
           balanceBefore: transaction.balanceBefore,
           balanceAfter: transaction.balanceAfter,
           description: transaction.description,
-          referenceId: transaction.referenceId,
           createdAt: transaction.createdAt,
           wallet: {
             id: transaction.wallet.id,

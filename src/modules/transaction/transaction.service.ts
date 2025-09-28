@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, InternalServerErrorException } from '@
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { TransactionEntity, TransactionType, TransactionStatus } from './entities/transaction.entity';
+import { WalletEntity } from '../wallet/entities/wallet.entity';
 import { WalletService } from '../wallet/wallet.service';
 import { DepositDto, WithdrawTransactionDto } from './dto/transaction.dto';
 
@@ -10,177 +11,230 @@ export class TransactionService {
   constructor(
     @InjectRepository(TransactionEntity)
     private transactionRepository: Repository<TransactionEntity>,
+    @InjectRepository(WalletEntity)
+    private walletRepository: Repository<WalletEntity>,
     private walletService: WalletService,
     private dataSource: DataSource,
-  ) {}
+  ) { }
 
   async deposit(userId: string, depositDto: DepositDto): Promise<TransactionEntity> {
-    console.log('=== TRANSACTION DEPOSIT START ===');
-    console.log('Deposit params:', { userId, ...depositDto });
-
     const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
 
     try {
-      // Get current wallet balance
-      const wallet = await this.walletService.findByUserId(userId);
-      const balanceBefore = this.toNumber(wallet.balance);
-      
-      console.log('Wallet before deposit:', { 
-        walletId: wallet.id, 
-        balanceBefore,
-        depositAmount: depositDto.amount 
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+
+      const wallet = await queryRunner.manager.findOne(WalletEntity, {
+        where: { userId },
+        lock: { mode: 'pessimistic_write' }
       });
 
-      // Create transaction record with PENDING status
-      const transaction = this.transactionRepository.create({
+      if (!wallet) {
+        throw new BadRequestException(`Wallet not found for user: ${userId}`);
+      }
+
+      const balanceBefore = this.toNumber(wallet.balance);
+      const balanceAfter = balanceBefore + depositDto.amount;
+
+      const transactionData = {
         walletId: wallet.id,
         type: TransactionType.DEPOSIT,
         amount: depositDto.amount,
         status: TransactionStatus.PENDING,
         description: depositDto.description,
-        referenceId: depositDto.referenceId,
         balanceBefore: balanceBefore,
-        balanceAfter: balanceBefore + depositDto.amount,
+        balanceAfter: balanceAfter,
+      };
+
+      const transaction = queryRunner.manager.create(TransactionEntity, transactionData);
+      const savedTransaction = await queryRunner.manager.save(TransactionEntity, transaction);
+
+      await queryRunner.manager.update(WalletEntity, wallet.id, {
+        balance: balanceAfter
       });
 
-      const savedTransaction = await queryRunner.manager.save(TransactionEntity, transaction);
-      console.log('Transaction created:', { id: savedTransaction.id, status: savedTransaction.status });
-
-      // Update wallet balance
-      await this.walletService.addBalance(userId, { amount: depositDto.amount });
-      
-      // Update transaction status to COMPLETED
-      await queryRunner.manager.update(TransactionEntity, savedTransaction.id, { 
-        status: TransactionStatus.COMPLETED 
+      await queryRunner.manager.update(TransactionEntity, savedTransaction.id, {
+        status: TransactionStatus.COMPLETED
       });
 
       await queryRunner.commitTransaction();
-      
-      console.log('=== TRANSACTION DEPOSIT COMPLETED ===');
-      
-      // Return updated transaction
-      return this.findById(savedTransaction.id);
+
+      return await this.findById(savedTransaction.id);
 
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      console.error('Deposit transaction failed:', error);
-      
-      // Update transaction status to FAILED if transaction was created
-      try {
-        const failedTransaction = await this.transactionRepository.findOne({
-          where: { 
-            walletId: (await this.walletService.findByUserId(userId)).id,
-            status: TransactionStatus.PENDING 
-          },
-          order: { createdAt: 'DESC' }
-        });
-        
-        if (failedTransaction) {
-          await this.transactionRepository.update(failedTransaction.id, { 
-            status: TransactionStatus.FAILED 
-          });
-        }
-      } catch (updateError) {
-        console.error('Failed to update transaction status:', updateError);
-      }
-
-      throw new InternalServerErrorException('Deposit transaction failed');
+      throw new InternalServerErrorException(`Deposit transaction failed: ${error.message}`);
     } finally {
       await queryRunner.release();
     }
   }
 
   async withdraw(userId: string, withdrawDto: WithdrawTransactionDto): Promise<TransactionEntity> {
-    console.log('=== TRANSACTION WITHDRAW START ===');
-    console.log('Withdraw params:', { userId, ...withdrawDto });
-
     const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
 
     try {
-      // Get current wallet balance
-      const wallet = await this.walletService.findByUserId(userId);
-      const balanceBefore = this.toNumber(wallet.balance);
-      
-      console.log('Wallet before withdraw:', { 
-        walletId: wallet.id, 
-        balanceBefore,
-        withdrawAmount: withdrawDto.amount 
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+
+      const wallet = await queryRunner.manager.findOne(WalletEntity, {
+        where: { userId },
+        lock: { mode: 'pessimistic_write' }
       });
 
-      // Check sufficient balance
-      if (balanceBefore < withdrawDto.amount) {
-        throw new BadRequestException(
-          `Insufficient balance. Current: ${balanceBefore}, Requested: ${withdrawDto.amount}`
-        );
+      if (!wallet) {
+        throw new BadRequestException(`Wallet not found for user: ${userId}`);
       }
 
-      // Create transaction record with PENDING status
-      const transaction = this.transactionRepository.create({
+      const balanceBefore = this.toNumber(wallet.balance);
+
+      if (balanceBefore < withdrawDto.amount) {
+        throw new BadRequestException(`Insufficient balance. Current: ${balanceBefore}, Requested: ${withdrawDto.amount}`);
+      }
+
+      const balanceAfter = balanceBefore - withdrawDto.amount;
+
+      const transactionData = {
         walletId: wallet.id,
         type: TransactionType.WITHDRAW,
         amount: withdrawDto.amount,
         status: TransactionStatus.PENDING,
         description: withdrawDto.description,
-        referenceId: withdrawDto.referenceId,
         balanceBefore: balanceBefore,
-        balanceAfter: balanceBefore - withdrawDto.amount,
-      });
+        balanceAfter: balanceAfter,
+      };
 
+      const transaction = queryRunner.manager.create(TransactionEntity, transactionData);
       const savedTransaction = await queryRunner.manager.save(TransactionEntity, transaction);
-      console.log('Transaction created:', { id: savedTransaction.id, status: savedTransaction.status });
 
-      // Update wallet balance
-      await this.walletService.withdraw(userId, { amount: withdrawDto.amount });
-      
-      // Update transaction status to COMPLETED
-      await queryRunner.manager.update(TransactionEntity, savedTransaction.id, { 
-        status: TransactionStatus.COMPLETED 
+      await queryRunner.manager.update(WalletEntity, wallet.id, {
+        balance: balanceAfter
       });
 
       await queryRunner.commitTransaction();
-      
-      console.log('=== TRANSACTION WITHDRAW COMPLETED ===');
-      
-      // Return updated transaction
-      return this.findById(savedTransaction.id);
+
+      return await this.findById(savedTransaction.id);
 
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      console.error('Withdraw transaction failed:', error);
-      
-      // Update transaction status to FAILED if transaction was created
-      try {
-        const failedTransaction = await this.transactionRepository.findOne({
-          where: { 
-            walletId: (await this.walletService.findByUserId(userId)).id,
-            status: TransactionStatus.PENDING 
-          },
-          order: { createdAt: 'DESC' }
-        });
-        
-        if (failedTransaction) {
-          await this.transactionRepository.update(failedTransaction.id, { 
-            status: TransactionStatus.FAILED 
-          });
-        }
-      } catch (updateError) {
-        console.error('Failed to update transaction status:', updateError);
-      }
 
-      // Re-throw the original error if it's a BadRequestException
       if (error instanceof BadRequestException) {
         throw error;
       }
-      
-      throw new InternalServerErrorException('Withdraw transaction failed');
+
+      throw new InternalServerErrorException(`Withdraw transaction failed: ${error.message}`);
     } finally {
       await queryRunner.release();
     }
   }
+
+async approveWithdraw(transactionId: string, adminId?: string): Promise<TransactionEntity> {
+  const queryRunner = this.dataSource.createQueryRunner();
+
+  try {
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    // Load transaction với pessimistic lock (không có relations)
+    const transaction = await queryRunner.manager.findOne(TransactionEntity, {
+      where: { id: transactionId },
+      lock: { mode: 'pessimistic_write' }
+    });
+
+    if (!transaction) {
+      throw new BadRequestException(`Transaction not found: ${transactionId}`);
+    }
+
+    if (transaction.type !== TransactionType.WITHDRAW) {
+      throw new BadRequestException(`Only withdraw transactions can be approved`);
+    }
+
+    if (transaction.status !== TransactionStatus.PENDING) {
+      throw new BadRequestException(`Transaction is not in pending status`);
+    }
+
+    // Update transaction status
+    await queryRunner.manager.update(TransactionEntity, transactionId, {
+      status: TransactionStatus.COMPLETED,
+    });
+
+    await queryRunner.commitTransaction();
+
+    return await this.findById(transactionId);
+
+  } catch (error) {
+    await queryRunner.rollbackTransaction();
+
+    if (error instanceof BadRequestException) {
+      throw error;
+    }
+
+    throw new InternalServerErrorException(`Approve withdraw failed: ${error.message}`);
+  } finally {
+    await queryRunner.release();
+  }
+}
+async rejectWithdraw(transactionId: string, reason?: string, adminId?: string): Promise<TransactionEntity> {
+  const queryRunner = this.dataSource.createQueryRunner();
+
+  try {
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    // Load transaction với pessimistic lock (không có relations)
+    const transaction = await queryRunner.manager.findOne(TransactionEntity, {
+      where: { id: transactionId },
+      lock: { mode: 'pessimistic_write' }
+    });
+
+    if (!transaction) {
+      throw new BadRequestException(`Transaction not found: ${transactionId}`);
+    }
+
+    if (transaction.type !== TransactionType.WITHDRAW) {
+      throw new BadRequestException(`Only withdraw transactions can be rejected`);
+    }
+
+    if (transaction.status !== TransactionStatus.PENDING) {
+      throw new BadRequestException(`Transaction is not in pending status`);
+    }
+
+    // Load wallet với pessimistic lock
+    const wallet = await queryRunner.manager.findOne(WalletEntity, {
+      where: { id: transaction.walletId },
+      lock: { mode: 'pessimistic_write' }
+    });
+
+    if (wallet) {
+      const currentBalance = this.toNumber(wallet.balance);
+      const refundBalance = currentBalance + transaction.amount;
+
+      await queryRunner.manager.update(WalletEntity, wallet.id, {
+        balance: refundBalance
+      });
+    }
+
+    // Update transaction status
+    await queryRunner.manager.update(TransactionEntity, transactionId, {
+      status: TransactionStatus.FAILED,
+      description: reason ? `${transaction.description} - Rejected: ${reason}` : `${transaction.description} - Rejected`
+    });
+
+    await queryRunner.commitTransaction();
+
+    return await this.findById(transactionId);
+
+  } catch (error) {
+    await queryRunner.rollbackTransaction();
+
+    if (error instanceof BadRequestException) {
+      throw error;
+    }
+
+    throw new InternalServerErrorException(`Reject withdraw failed: ${error.message}`);
+  } finally {
+    await queryRunner.release();
+  }
+}
 
   async findById(id: string): Promise<TransactionEntity> {
     const transaction = await this.transactionRepository.findOne({
@@ -189,20 +243,41 @@ export class TransactionService {
     });
 
     if (!transaction) {
-      throw new BadRequestException('Transaction not found');
+      throw new BadRequestException(`Transaction not found for ID: ${id}`);
     }
 
     return transaction;
   }
 
-  async getTransactionHistory(userId: string, limit: number = 20, offset: number = 0): Promise<{
-    transactions: TransactionEntity[];
-    total: number;
-  }> {
+  async findByIdAndUserId(id: string, userId: string): Promise<TransactionEntity> {
     const wallet = await this.walletService.findByUserId(userId);
-    
+
+    const transaction = await this.transactionRepository.findOne({
+      where: {
+        id,
+        walletId: wallet.id
+      },
+      relations: ['wallet']
+    });
+
+    if (!transaction) {
+      throw new BadRequestException(`Transaction not found or access denied`);
+    }
+
+    return transaction;
+  }
+
+async getTransactionHistory(
+  userId?: string, 
+  limit: number = 20, 
+  offset: number = 0,
+  isAdmin: boolean = false
+): Promise<{
+  transactions: TransactionEntity[];
+  total: number;
+}> {
+  if (isAdmin) {
     const [transactions, total] = await this.transactionRepository.findAndCount({
-      where: { walletId: wallet.id },
       order: { createdAt: 'DESC' },
       take: limit,
       skip: offset,
@@ -212,8 +287,25 @@ export class TransactionService {
     return { transactions, total };
   }
 
+  if (!userId) {
+    throw new BadRequestException('User ID is required for non-admin users');
+  }
+
+  const wallet = await this.walletService.findByUserId(userId);
+  
+  const [transactions, total] = await this.transactionRepository.findAndCount({
+    where: { walletId: wallet.id },
+    order: { createdAt: 'DESC' },
+    take: limit,
+    skip: offset,
+    relations: ['wallet']
+  });
+
+  return { transactions, total };
+}
+
   async getTransactionsByType(
-    userId: string, 
+    userId: string,
     type: TransactionType,
     limit: number = 20,
     offset: number = 0
@@ -222,9 +314,9 @@ export class TransactionService {
     total: number;
   }> {
     const wallet = await this.walletService.findByUserId(userId);
-    
+
     const [transactions, total] = await this.transactionRepository.findAndCount({
-      where: { 
+      where: {
         walletId: wallet.id,
         type: type
       },
@@ -237,17 +329,35 @@ export class TransactionService {
     return { transactions, total };
   }
 
+  async getPendingWithdrawals(limit: number = 20, offset: number = 0): Promise<{
+    transactions: TransactionEntity[];
+    total: number;
+  }> {
+    const [transactions, total] = await this.transactionRepository.findAndCount({
+      where: {
+        type: TransactionType.WITHDRAW,
+        status: TransactionStatus.PENDING
+      },
+      order: { createdAt: 'ASC' },
+      take: limit,
+      skip: offset,
+      relations: ['wallet']
+    });
+
+    return { transactions, total };
+  }
+
   private toNumber(value: any): number {
     if (typeof value === 'number') {
       return value;
     }
-    
+
     if (typeof value === 'string') {
       const cleaned = value.replace(/[^\d.-]/g, '');
       const parsed = parseFloat(cleaned);
       return isNaN(parsed) ? 0 : parsed;
     }
-    
+
     const parsed = parseFloat(value);
     return isNaN(parsed) ? 0 : parsed;
   }

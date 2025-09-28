@@ -1,12 +1,16 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString, IsEnum, Min } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { IsNotEmpty, IsNumber, IsOptional, IsString, IsEnum, Min, IsPositive, IsUUID } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { TransactionType } from '../entities/transaction.entity';
 
 export class CreateTransactionDto {
-  @IsNotEmpty()
+  @IsNotEmpty({ message: 'User ID should not be empty' })
+  @IsUUID(4, { message: 'User ID must be a valid UUID' })
+  userId: string;
+
+  @IsNotEmpty({ message: 'Amount should not be empty' })
+  @Type(() => Number) 
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Amount must have at most 2 decimal places' })
-  @Min(0.01, { message: 'Amount must be greater than 0' })
-  @Transform(({ value }) => parseFloat(value))
+  @IsPositive({ message: 'Amount must be greater than 0' })
   amount: number;
 
   @IsEnum(TransactionType)
@@ -22,10 +26,10 @@ export class CreateTransactionDto {
 }
 
 export class DepositDto {
-  @IsNotEmpty()
+  @IsNotEmpty({ message: 'Amount should not be empty' })
+  @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Amount must have at most 2 decimal places' })
-  @Min(0.01, { message: 'Amount must be greater than 0' })
-  @Transform(({ value }) => parseFloat(value))
+  @IsPositive({ message: 'Amount must be greater than 0' })
   amount: number;
 
   @IsOptional()
@@ -38,17 +42,13 @@ export class DepositDto {
 }
 
 export class WithdrawTransactionDto {
-  @IsNotEmpty()
+  @IsNotEmpty({ message: 'Amount should not be empty' })
+  @Type(() => Number) 
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Amount must have at most 2 decimal places' })
-  @Min(0.01, { message: 'Amount must be greater than 0' })
-  @Transform(({ value }) => parseFloat(value))
+  @IsPositive({ message: 'Amount must be greater than 0' })
   amount: number;
 
   @IsOptional()
   @IsString()
   description?: string;
-
-  @IsOptional()
-  @IsString()
-  referenceId?: string;
 }
