@@ -30,6 +30,10 @@ export class CreateLoanDto {
   @IsString()
   portraitUrl?: string;
 
+  @IsOptional()
+  @IsString()
+  personalSignatureUrl?: string;
+
   @IsEnum(Gender)
   gender: Gender;
 

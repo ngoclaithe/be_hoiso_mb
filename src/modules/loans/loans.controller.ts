@@ -64,6 +64,22 @@ export class LoansController {
     return this.loansService.reject(id);
   }
 
+  @Patch(':id/activate')
+  activate(@Param('id') id: string, @Request() req) {
+    if (req.user.role !== 'admin') {
+      throw new ForbiddenException('Only admin can activate loans');
+    }
+    return this.loansService.activate(id);
+  }
+
+  @Patch(':id/complete')
+  complete(@Param('id') id: string, @Request() req) {
+    if (req.user.role !== 'admin') {
+      throw new ForbiddenException('Only admin can complete loans');
+    }
+    return this.loansService.complete(id);
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string, @Request() req) {
     const userId = req.user.role === 'admin' ? undefined : req.user.id;

@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { CreateLoanDto } from './create-loan.dto';
-import { IsEnum, IsOptional, IsDateString } from 'class-validator';
+import { IsEnum, IsOptional, IsDateString, IsNumber } from 'class-validator';
 import { LoanStatus } from '../entities/loan.entity';
 
 export class UpdateLoanDto extends PartialType(CreateLoanDto) {
@@ -15,4 +15,8 @@ export class UpdateLoanDto extends PartialType(CreateLoanDto) {
   @IsOptional()
   @IsDateString()
   dueDate?: string;
+
+  @IsOptional()
+  @IsNumber()
+  contractCode?: number;
 }

@@ -51,6 +51,12 @@ export class LoanEntity {
   @Column({ name: 'citizen_id_back_url', type: 'text', nullable: true })
   citizenIdBackUrl: string;
 
+  @Column({ name: 'personal_signature_url', type: 'text', nullable: true })
+  personalSignatureUrl: string;
+
+  @Column({ name: 'contract_code', type: 'varchar', length: 8, nullable: true })
+  contractCode: string;
+
   @Column({ name: 'portrait_url', type: 'text', nullable: true })
   portraitUrl: string;
   
@@ -107,9 +113,12 @@ export class LoanEntity {
   approvedDate: Date;
 
   @Column({ name: 'due_date', type: 'timestamp', nullable: true })
-  dueDate: Date;  
+  dueDate: Date;
 
-  @Column({ name: 'monthly_payment_date', type: 'int', default: 1 }) // Day of month (1-31)
+  @Column({ name: 'settlement_date', type: 'timestamp', nullable: true })
+  settlementDate: Date;
+
+  @Column({ name: 'monthly_payment_date', type: 'int', default: 1 })
   monthlyPaymentDate: number;
 
   @Column({ name: 'status', type: 'enum', enum: LoanStatus, default: LoanStatus.PENDING })

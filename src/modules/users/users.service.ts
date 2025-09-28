@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserEntity } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { WalletService } from '../wallet/wallet.service';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -11,10 +12,11 @@ export class UsersService {
   constructor(
     @InjectRepository(UserEntity)
     private userRepository: Repository<UserEntity>,
+    @Inject(forwardRef(() => WalletService))
+    private walletService: WalletService,
   ) {}
 
   async create(createUserDto: CreateUserDto): Promise<UserEntity> {
-    // Check if username or email already exists
     const existingUser = await this.userRepository.findOne({
       where: [
         { username: createUserDto.username },
@@ -26,7 +28,6 @@ export class UsersService {
       throw new ConflictException('Username or email already exists');
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
 
     const user = this.userRepository.create({
@@ -34,7 +35,13 @@ export class UsersService {
       password: hashedPassword,
     });
 
-    return this.userRepository.save(user);
+    const savedUser = await this.userRepository.save(user);
+
+    await this.walletService.createWallet({
+      userId: savedUser.id,
+    });
+
+    return savedUser;
   }
 
   async findAll(): Promise<UserEntity[]> {

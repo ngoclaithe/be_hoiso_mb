@@ -1,16 +1,19 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, FindManyOptions } from 'typeorm';
 import { LoanEntity, LoanStatus } from './entities/loan.entity';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { UpdateLoanDto } from './dto/update-loan.dto';
 import { PaginationDto, PaginationResult } from '../../common/dto/pagination.dto';
+import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
 export class LoansService {
   constructor(
     @InjectRepository(LoanEntity)
     private loanRepository: Repository<LoanEntity>,
+    @Inject(forwardRef(() => WalletService))
+    private walletService: WalletService,
   ) {}
 
   async create(createLoanDto: CreateLoanDto, userId: string): Promise<LoanEntity> {
@@ -62,7 +65,6 @@ export class LoansService {
 
     const [data, total] = await this.loanRepository.findAndCount(queryOptions);
 
-    // Remove sensitive data for non-admin users
     const sanitizedData = userRole !== 'admin' 
       ? data.map(loan => this.sanitizeLoanData(loan))
       : data;
@@ -118,7 +120,6 @@ export class LoansService {
 
     const [data, total] = await this.loanRepository.findAndCount(queryOptions);
 
-    // Remove sensitive data for non-admin users
     const sanitizedData = userRole !== 'admin' 
       ? data.map(loan => this.sanitizeLoanData(loan))
       : data;
@@ -151,13 +152,16 @@ export class LoansService {
       throw new NotFoundException('Loan not found');
     }
 
-    // Remove sensitive data for non-admin users
     return userRole !== 'admin' ? this.sanitizeLoanData(loan) : loan;
   }
 
   private sanitizeLoanData(loan: LoanEntity): LoanEntity {
     const { citizenIdFrontUrl, citizenIdBackUrl, portraitUrl, ...sanitized } = loan;
     return sanitized as LoanEntity;
+  }
+
+  private generateContractCode(): string {
+    return Math.floor(10000000 + Math.random() * 90000000).toString();
   }
 
   async update(id: string, updateLoanDto: UpdateLoanDto, userId?: string): Promise<LoanEntity> {
@@ -182,19 +186,63 @@ export class LoansService {
   async approve(id: string): Promise<LoanEntity> {
     const loan = await this.findOne(id);
     
+    if (loan.status !== LoanStatus.PENDING) {
+      throw new ForbiddenException('Only pending loans can be approved');
+    }
+    
     loan.status = LoanStatus.APPROVED;
     loan.approvedDate = new Date();
+    loan.contractCode = this.generateContractCode();
     
     const dueDate = new Date();
     dueDate.setMonth(dueDate.getMonth() + loan.loanTermMonths);
     loan.dueDate = dueDate;
 
-    return this.loanRepository.save(loan);
+    const savedLoan = await this.loanRepository.save(loan);
+
+    try {
+      await this.walletService.addBalance(loan.userId, {
+        amount: loan.loanAmount
+      });
+    } catch (error) {
+      console.error('Failed to add balance to wallet:', error);
+    }
+
+    return savedLoan;
   }
 
   async reject(id: string): Promise<LoanEntity> {
     const loan = await this.findOne(id);
+    
+    if (loan.status !== LoanStatus.PENDING) {
+      throw new ForbiddenException('Only pending loans can be rejected');
+    }
+    
     loan.status = LoanStatus.REJECTED;
+    return this.loanRepository.save(loan);
+  }
+
+  async complete(id: string): Promise<LoanEntity> {
+    const loan = await this.findOne(id);
+    
+    if (loan.status !== LoanStatus.ACTIVE && loan.status !== LoanStatus.APPROVED) {
+      throw new ForbiddenException('Only active or approved loans can be completed');
+    }
+    
+    loan.status = LoanStatus.COMPLETED;
+    loan.settlementDate = new Date();
+    
+    return this.loanRepository.save(loan);
+  }
+
+  async activate(id: string): Promise<LoanEntity> {
+    const loan = await this.findOne(id);
+    
+    if (loan.status !== LoanStatus.APPROVED) {
+      throw new ForbiddenException('Only approved loans can be activated');
+    }
+    
+    loan.status = LoanStatus.ACTIVE;
     return this.loanRepository.save(loan);
   }
 
@@ -216,6 +264,7 @@ export class LoansService {
       rejectedLoans,
       activeLoans,
       completedLoans,
+      overdueLoans,
     ] = await Promise.all([
       this.loanRepository.count(),
       this.loanRepository.count({ where: { status: LoanStatus.PENDING } }),
@@ -223,11 +272,20 @@ export class LoansService {
       this.loanRepository.count({ where: { status: LoanStatus.REJECTED } }),
       this.loanRepository.count({ where: { status: LoanStatus.ACTIVE } }),
       this.loanRepository.count({ where: { status: LoanStatus.COMPLETED } }),
+      this.loanRepository.count({ where: { status: LoanStatus.OVERDUE } }),
     ]);
 
     const totalAmount = await this.loanRepository
       .createQueryBuilder('loan')
       .select('SUM(loan.loanAmount)', 'total')
+      .getRawOne();
+
+    const approvedAmount = await this.loanRepository
+      .createQueryBuilder('loan')
+      .select('SUM(loan.loanAmount)', 'total')
+      .where('loan.status IN (:...statuses)', { 
+        statuses: [LoanStatus.APPROVED, LoanStatus.ACTIVE, LoanStatus.COMPLETED] 
+      })
       .getRawOne();
 
     return {
@@ -237,7 +295,9 @@ export class LoansService {
       rejectedLoans,
       activeLoans,
       completedLoans,
+      overdueLoans,
       totalLoanAmount: totalAmount?.total || 0,
+      approvedLoanAmount: approvedAmount?.total || 0,
     };
   }
 }
