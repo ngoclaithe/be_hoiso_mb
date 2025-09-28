@@ -55,7 +55,9 @@ export class AuthService {
   }
 
   async getProfile(userId: string) {
+    console.log('Getting profile for userId:', userId);
     const user = await this.usersService.findOne(userId);
+    console.log('Found user:', user?.username);
     return user;
   }
 }
