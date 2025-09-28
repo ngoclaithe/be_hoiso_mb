@@ -40,7 +40,7 @@ export class LoansService {
     return savedLoan;
   }
 
-  async findAll(paginationDto: PaginationDto, userRole?: string): Promise<PaginationResult<LoanEntity>> {
+  async findAll(paginationDto: PaginationDto): Promise<PaginationResult<LoanEntity>> {
     const page = paginationDto.page || 1;
     const limit = paginationDto.limit || 10;
     const search = paginationDto.search;
@@ -79,14 +79,10 @@ export class LoansService {
 
     const [data, total] = await this.loanRepository.findAndCount(queryOptions);
 
-    const sanitizedData = userRole !== 'admin'
-      ? data.map(loan => this.sanitizeLoanData(loan))
-      : data;
-
     const totalPages = Math.ceil(total / limit);
 
     return {
-      data: sanitizedData,
+      data,
       total,
       page,
       limit,
@@ -96,7 +92,7 @@ export class LoansService {
     };
   }
 
-  async findByUser(userId: string, paginationDto: PaginationDto, userRole?: string): Promise<PaginationResult<LoanEntity>> {
+  async findByUser(userId: string, paginationDto: PaginationDto): Promise<PaginationResult<LoanEntity>> {
     const page = paginationDto.page || 1;
     const limit = paginationDto.limit || 10;
     const search = paginationDto.search;
@@ -134,14 +130,10 @@ export class LoansService {
 
     const [data, total] = await this.loanRepository.findAndCount(queryOptions);
 
-    const sanitizedData = userRole !== 'admin'
-      ? data.map(loan => this.sanitizeLoanData(loan))
-      : data;
-
     const totalPages = Math.ceil(total / limit);
 
     return {
-      data: sanitizedData,
+      data,
       total,
       page,
       limit,
@@ -151,7 +143,7 @@ export class LoansService {
     };
   }
 
-  async findOne(id: string, userId?: string, userRole?: string): Promise<LoanEntity> {
+  async findOne(id: string, userId?: string): Promise<LoanEntity> {
     const whereCondition: any = { id };
     if (userId) {
       whereCondition.userId = userId;
@@ -166,12 +158,20 @@ export class LoansService {
       throw new NotFoundException('Loan not found');
     }
 
-    return userRole !== 'admin' ? this.sanitizeLoanData(loan) : loan;
+    return loan;
   }
 
-  private sanitizeLoanData(loan: LoanEntity): LoanEntity {
-    const { citizenIdFrontUrl, citizenIdBackUrl, portraitUrl, ...sanitized } = loan;
-    return sanitized as LoanEntity;
+  /**
+   * Get first loan (oldest loan) for a user
+   */
+  async getFirstLoan(userId: string): Promise<LoanEntity | null> {
+    const loan = await this.loanRepository.findOne({
+      where: { userId },
+      relations: ['user'],
+      order: { createdAt: 'ASC' } // Get the oldest loan first
+    });
+
+    return loan;
   }
 
   private generateContractCode(): string {

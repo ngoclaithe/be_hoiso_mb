@@ -4,11 +4,46 @@ import { CreateLoanDto } from './dto/create-loan.dto';
 import { UpdateLoanDto } from './dto/update-loan.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LoanEntity } from './entities/loan.entity';
 
 @Controller('loans')
 @UseGuards(JwtAuthGuard)
 export class LoansController {
   constructor(private readonly loansService: LoansService) {}
+
+  /**
+   * Helper method to sanitize loan data for non-admin users
+   */
+  private sanitizeLoanData(loan: LoanEntity, userRole: string): any {
+    if (userRole === 'admin') {
+      return loan;
+    }
+
+    const { citizenIdFrontUrl, citizenIdBackUrl, portraitUrl, ...sanitizedLoan } = loan;
+    
+    // Also sanitize user data if present
+    if (sanitizedLoan.user) {
+      // Fix: Use type assertion or optional destructuring
+      const { password, ...sanitizedUser } = sanitizedLoan.user as any;
+      sanitizedLoan.user = sanitizedUser;
+    }
+    
+    return sanitizedLoan;
+  }
+
+  /**
+   * Helper method to sanitize paginated loan data
+   */
+  private sanitizePaginatedData(result: any, userRole: string): any {
+    if (userRole === 'admin') {
+      return result;
+    }
+
+    return {
+      ...result,
+      data: result.data.map(loan => this.sanitizeLoanData(loan, userRole))
+    };
+  }
 
   @Post()
   create(@Body() createLoanDto: CreateLoanDto, @Request() req) {
@@ -16,11 +51,12 @@ export class LoansController {
   }
 
   @Get()
-  findAll(@Query() paginationDto: PaginationDto, @Request() req) {
+  async findAll(@Query() paginationDto: PaginationDto, @Request() req) {
     if (req.user.role === 'admin') {
-      return this.loansService.findAll(paginationDto, req.user.role);
+      return this.loansService.findAll(paginationDto);
     }
-    return this.loansService.findByUser(req.user.id, paginationDto, req.user.role);
+    const result = await this.loansService.findByUser(req.user.id, paginationDto);
+    return this.sanitizePaginatedData(result, req.user.role);
   }
 
   @Get('statistics')
@@ -32,14 +68,23 @@ export class LoansController {
   }
 
   @Get('my-loans')
-  findMyLoans(@Query() paginationDto: PaginationDto, @Request() req) {
-    return this.loansService.findByUser(req.user.id, paginationDto, req.user.role);
+  async findMyLoans(@Query() paginationDto: PaginationDto, @Request() req) {
+    const result = await this.loansService.findByUser(req.user.id, paginationDto);
+    return this.sanitizePaginatedData(result, req.user.role);
+  }
+
+  // New route to get first loan info
+  @Get('first-loan')
+  async getFirstLoan(@Request() req) {
+    const loan = await this.loansService.getFirstLoan(req.user.id);
+    return loan ? this.sanitizeLoanData(loan, req.user.role) : null;
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @Request() req) {
+  async findOne(@Param('id') id: string, @Request() req) {
     const userId = req.user.role === 'admin' ? undefined : req.user.id;
-    return this.loansService.findOne(id, userId, req.user.role);
+    const loan = await this.loansService.findOne(id, userId);
+    return this.sanitizeLoanData(loan, req.user.role);
   }
 
   @Patch(':id')
