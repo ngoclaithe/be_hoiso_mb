@@ -1,6 +1,7 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
 import { UserEntity } from '../../users/entities/user.entity';
 import { LoanHistoryEntity } from '../../loan-history/entities/loan-history.entity';
+import { strict } from 'assert';
 
 export enum LoanStatus {
   PENDING = 'pending',
@@ -52,14 +53,14 @@ export class LoanEntity {
   citizenIdBackUrl: string;
 
   @Column({ name: 'personal_signature_url', type: 'text', nullable: true })
-  personalSignatureUrl: string;
+  personalSignatureUrl?: string;
 
   @Column({ name: 'contract_code', type: 'varchar', length: 8, nullable: true })
-  contractCode: string;
+  contractCode?: string;
 
   @Column({ name: 'portrait_url', type: 'text', nullable: true })
-  portraitUrl: string;
-  
+  portraitUrl?: string;
+
   @Column({ name: 'gender', type: 'enum', enum: Gender })
   gender: Gender;
 
@@ -110,13 +111,13 @@ export class LoanEntity {
 
   // Important Dates
   @Column({ name: 'approved_date', type: 'timestamp', nullable: true })
-  approvedDate: Date;
+  approvedDate?: Date;
 
   @Column({ name: 'due_date', type: 'timestamp', nullable: true })
-  dueDate: Date;
+  dueDate?: Date;
 
   @Column({ name: 'settlement_date', type: 'timestamp', nullable: true })
-  settlementDate: Date;
+  settlementDate?: Date;
 
   @Column({ name: 'monthly_payment_date', type: 'int', default: 1 })
   monthlyPaymentDate: number;

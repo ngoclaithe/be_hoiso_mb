@@ -7,6 +7,7 @@ import { LoanHistoryModule } from './modules/loan-history/loan-history.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { WalletModule } from './modules/wallet/wallet.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { LoggerService } from './common/logger/logger.service';
 import { databaseConfig } from './config/database.config';
 
@@ -20,6 +21,7 @@ import { databaseConfig } from './config/database.config';
     AuthModule,
     UsersModule,
     WalletModule,
+    NotificationsModule,
   ],
   providers: [LoggerService],
   exports: [LoggerService],
