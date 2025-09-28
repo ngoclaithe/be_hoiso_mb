@@ -22,7 +22,7 @@ export class AuthController {
   @Get('profile')
   async getProfile(@Request() req) {
     console.log('req.user:', req.user);
-    console.log('req.user.sub:', req.user.sub);
-    return this.authService.getProfile(req.user.sub);
+    console.log('req.user.id:', req.user.id);
+    return this.authService.getProfile(req.user.id);
   }
 }
